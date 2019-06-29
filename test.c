@@ -46,14 +46,51 @@ char *gnss_nmea = "$GPDTM,999,,0.08,N,0.07,E,-47.7,W84*1C\r\n"
   "$GPGNS,091547.00,5114.50897,N,00012.28663,W,AA,10,0.83,111.1,45.6,,,V*71\r\n";
 
 
+// strAppendCharater, NOTE modify buff
+// TODO: bug if lenght out of range.
+void strAppendCharater(char *buff, char insert, int pos)
+{
+    char temp[MAX_NMEA_FRAME_SIZE] = {0};
+    PRINT_MESSAGE_DEBUG ("BUFF before: %s\n", buff);
+    strncpy(temp, buff, pos); // copy at most first pos characters
+    PRINT_MESSAGE_DEBUG ("temp 1: %s\n", temp);
+    *(temp+pos) = insert;
+    PRINT_MESSAGE_DEBUG ("temp 2: %s\n", temp);
+    strcpy((temp+pos+1), buff+pos); 
+    PRINT_MESSAGE_DEBUG ("temp 3: %s\n", temp);
+    strcpy(buff, temp);   // copy it back to subject
+    PRINT_MESSAGE_DEBUG ("BUFF after : %s\n", buff);
+}
+
+
+// update nmea buffer
+// TODO: bug if lenght out of range.
+void updateNmeaBuff(char *buff)
+{
+    int len = strlen(buff);
+    // PRINT_MESSAGE_DEBUG("Lenght: %d\n",len);
+    for(int i=0; i<len-1; i++)
+    {
+        if (',' == *(buff+i) && (',' == *(buff+i+1)))
+        {
+            //  PRINT_MESSAGE_DEBUG("i : %d\n",i);
+            strAppendCharater(buff, '#', i+1);
+        }
+    }
+}
+
 
 static bool getNmeaFrame (char *buff, char *nmea, char *output, size_t lenght)
 {
     char *substr = NULL;
     char *token = NULL;
     char *token_ptr = NULL;
+#ifdef __cplusplus
+    char *nmea_buff = (char*)malloc(MAX_NMEA_FRAME_SIZE);
+#else
     char *nmea_buff = malloc(MAX_NMEA_FRAME_SIZE);
-    
+#endif
+
     memset(nmea_buff, 0, MAX_NMEA_FRAME_SIZE);
 
     strncpy(nmea_buff, buff, MAX_NMEA_FRAME_STRING);
@@ -93,9 +130,12 @@ static bool getNmeaField(const char *nmea, int indexField, char *valueOut)
 {
     char *token = NULL;
     char *token_ptr = NULL;
+#ifdef __cplusplus
+    char* nmea_buff = (char*)malloc(MAX_NMEA_FRAME_SIZE);
+#else
     char* nmea_buff = malloc(MAX_NMEA_FRAME_SIZE);
+#endif
     memset(nmea_buff, 0, MAX_NMEA_FRAME_SIZE);
-    
     strncpy(nmea_buff, nmea, MAX_NMEA_FRAME_SIZE);
 
     // // now start get line
@@ -198,9 +238,43 @@ dddmm2Degrees_Failed:
 
 static bool getPosition(char *nmea, char *lat, char *lon, char *utctime)
 {
+    if (NULL == nmea)
+    {
+        PRINT_MESSAGE_ERROR("nmea frame is NULL\n");
+        return false;
+    }
+
+    char data[MAX_POISITION_LENGHT] = {0};
+    char str_out[MAX_NMEA_FRAME_SIZE] = {0};
+    int index = 0;
+
+    // working on temp buff.
+#ifdef __cplusplus
+    char *nmea_buff = (char*)malloc(MAX_NMEA_FRAME_SIZE);
+#else
+    char *nmea_buff = malloc(MAX_NMEA_FRAME_SIZE);
+#endif
+    memset(nmea_buff, 0, MAX_NMEA_FRAME_SIZE);
+    strncpy(nmea_buff, nmea, MAX_NMEA_FRAME_STRING);
+
+    char* GgaInfo[] = {"0 xxGGA", "1 time", "2 lat", "3 NS", "4 long",
+                       "5 EW", "6 quality", "7 numSV", "8 HDOP", "9 alt",
+                       "10 uAlt", "11 sep", "12 uSep", "13 diffAge", 
+                       "14 diffStation", "15 cs", "16 <CR><LF>", NULL};
+    
+    char* GllInfo[] = {"0 xxGLL", "1 lat", "2 NS", "3 long", "4 EW", 
+                       "5 time", "6 status", "7 posMode", "8 cs",
+                       "9 <CR><LF>", NULL};
+    
+    char* GnsInfo[] = {NULL};
+    
+    char** GnssFrame[] = {GgaInfo, GllInfo, GnsInfo, NULL};
+
+
     if (NULL != strstr(nmea, "GNS"))
     {
         PRINT_MESSAGE("NMEA: GNSS fix data GNS \n");
+        index =2;
         // 0 xxGNS - string $GPGNS GNS Message ID (xx = current Talker ID)
         // 1 time - hhmmss.ss 091547.00 UTC time, see note on UTC representation
         // 2 lat - ddmm.mmmmm
@@ -220,6 +294,7 @@ static bool getPosition(char *nmea, char *lat, char *lon, char *utctime)
     else if (NULL != strstr(nmea, "GLL"))
     {
         PRINT_MESSAGE("NMEA: GNSS Latitude and longitude, with time of position fix and status GLL \n");
+        index =1;
         // 0 xxGLL - string $GPGLL GLL Message ID (xx = current Talker ID)
         // 1 lat - ddmm.mmmmm 4717.11364 Latitude (degrees & minutes), see format description
         // 2 NS - character N North/South indicator
@@ -240,6 +315,7 @@ static bool getPosition(char *nmea, char *lat, char *lon, char *utctime)
     else if (NULL != strstr(nmea, "GGA"))
     {
         PRINT_MESSAGE("NMEA: GNSSLatitude Global positioning system fix data GGA \n");
+        index =0;
         // 0 xxGGA - string $GPGGA GGA Message ID (xx = current Talker ID)
         // 1 time - hhmmss.ss 092725.00 UTC time, see note on UTC representation
         // 2 lat - ddmm.mmmmm 4717.11399 Latitude (degrees & minutes), see format description
@@ -261,10 +337,27 @@ static bool getPosition(char *nmea, char *lat, char *lon, char *utctime)
 
     else
     {
-        PRINT_MESSAGE("NMEA: not supported \n");
+        PRINT_MESSAGE_ERROR("NMEA: not supported \n");
+        free(nmea_buff);
         return false;
     }
-    
+
+    int i = 0;
+    while (NULL != GnssFrame[index][i])
+    {
+        if (getNmeaField(nmea_buff, i, data))
+        {
+            if ('#' == data[0])
+                strncpy(data, "null", 5);
+
+            snprintf(str_out, MAX_NMEA_FRAME_SIZE, "GNS: Field %s: %s",
+                     GnssFrame[index][i], data);
+            PRINT_MESSAGE("%s\n", str_out);
+        }
+        i++;
+    }
+
+    free(nmea_buff);
     return true;
 }
 
