@@ -4,10 +4,15 @@
                 Code, Compile, Run and Debug C program online.
 Write your code in this editor and press "Run" button to compile and execute it.
 
+  tdchung
+  tdchung.9@gmail.com
+  xx-Jun-2019
+
 *******************************************************************************/
 
 #include <stdio.h>
-// #include <string.h>
+#include <stdlib.h>
+#include <string.h>
 
 #ifndef bool
 #define bool   int
@@ -17,8 +22,21 @@ Write your code in this editor and press "Run" button to compile and execute it.
 
 #define MAX_NMEA_FRAME_STRING 1023
 #define MAX_NMEA_FRAME_SIZE   MAX_NMEA_FRAME_STRING + 1
-#define MAX_POISITION_LENGHT  127
+#define MAX_POISITION_LENGHT  64
 
+#define LOG_DEBUG 1
+
+// define print info message
+#define PRINT_MESSAGE(Msg, ...) { printf("INFO. " Msg, ##__VA_ARGS__); }
+#define PRINT_MESSAGE_ERROR(Msg, ...) { printf("ERROR. " Msg, ##__VA_ARGS__); }
+
+#ifdef  LOG_DEBUG
+#define PRINT_MESSAGE_DEBUG(Msg, ...) { printf("DEBUG. " Msg, ##__VA_ARGS__); }
+#else
+#define PRINT_MESSAGE_DEBUG(Msg, ...) {}
+#endif
+
+// test gnss frame
 char *gnss_nmea = "$GPDTM,999,,0.08,N,0.07,E,-47.7,W84*1C\r\n"
   "$EIGAQ,RMC*2B\r\n"
   "$EIGBQ,RMC*28\r\n"
@@ -26,6 +44,7 @@ char *gnss_nmea = "$GPDTM,999,,0.08,N,0.07,E,-47.7,W84*1C\r\n"
   "$GPGGA,092725.00,4717.11399,N,00833.91590,E,1,08,1.01,499.6,M,48.0,M,,*5B\r\n"
   "$GPGLL,4717.11364,N,00833.91565,E,092321.00,A,A*60\r\n"
   "$GPGNS,091547.00,5114.50897,N,00012.28663,W,AA,10,0.83,111.1,45.6,,,V*71\r\n";
+
 
 
 static bool getNmeaFrame (char *buff, char *nmea, char *output, size_t lenght)
@@ -41,20 +60,22 @@ static bool getNmeaFrame (char *buff, char *nmea, char *output, size_t lenght)
     substr = strstr (nmea_buff, nmea);
     if (NULL == substr)
     {
-        printf ("ERROR\n");
+        PRINT_MESSAGE_ERROR ("No sub string\n");
         goto getNmeaFrame_False;
     }
     else
     // nmea is available
-    printf ("substr = : %s\n", substr);
+    {
+        PRINT_MESSAGE_DEBUG ("substr = : %s\n", substr);
+    }
 
     // now start get line
     token = strtok_r(substr, "\r", &token_ptr);
-    printf("token = : %s\n", token);
-    printf("token_ptr = : %s\n", token_ptr);
+    PRINT_MESSAGE_DEBUG("token = : %s\n", token);
+    PRINT_MESSAGE_DEBUG("token_ptr = : %s\n", token_ptr);
     if (NULL == token)
     {
-        printf("ERROR token\n");
+        PRINT_MESSAGE_ERROR("get token error\n");
         goto getNmeaFrame_False;
     }
 
@@ -68,7 +89,7 @@ getNmeaFrame_False:
     return false;
 }
 
-static bool getNmeaField(char *nmea, int indexField, char *valueOut)
+static bool getNmeaField(const char *nmea, int indexField, char *valueOut)
 {
     char *token = NULL;
     char *token_ptr = NULL;
@@ -114,25 +135,72 @@ getNmeaField_Passed:
     return true;
 getNmeaField_Failed:
     free(nmea_buff);
+    PRINT_MESSAGE_ERROR ("Something failed in getNmeaField\n");
     return false;
 }
 
 
+// for correction
+// 4717.11399N, 00833.91590E --> 47.2852332°, 008.5652650°
+// N, E --> positive
+// S, W --> negative
 static bool dddmm2Degrees(char *dddmmIn, char* degreesOut)
 {
-    // TODO:
     // 1. get degrees. = dddmmIn.slip('.')[0]/100
     // 2. get minutes. = (dddmmIn.slip('.')[0]%100 + 0.dddmmIn.slip('.')[1])
     // 3. decimal = degrees + minutes/60
     // 4. convert to string and return
+
+    char* str_ptr = NULL;
+    double position = 0.0;
+#ifdef __cplusplus
+    char* degrees = (char*)malloc(MAX_POISITION_LENGHT);
+#else
+    char* degrees = malloc(MAX_POISITION_LENGHT);
+#endif
+    memset(degrees, 0, MAX_POISITION_LENGHT);
+
+
+    if (NULL == degreesOut)
+    {
+        PRINT_MESSAGE_ERROR ("pointer out is NULL\n");
+        goto dddmm2Degrees_Failed;
+    }
+
+    position = strtod(dddmmIn, &str_ptr);
+    if ((0.0 == position) && (str_ptr == dddmmIn))
+    {
+        PRINT_MESSAGE_ERROR ("Data format not correct\n");
+        goto dddmm2Degrees_Failed;
+    }
+
+    PRINT_MESSAGE_DEBUG ("pointer: %p\n", str_ptr);
+    PRINT_MESSAGE_DEBUG ("pointer: %p\n", dddmmIn);
+    PRINT_MESSAGE_DEBUG ("position: %4.8lf\n", position);
+
+    position = (int) position/100 + (position - (int) position/100*100)/60;
+    PRINT_MESSAGE_DEBUG ("degrees: %4.8lf\n", position);
+
+    // not check pointer out lenght
+    snprintf(degrees, MAX_POISITION_LENGHT, "%.8lf", position);
+    PRINT_MESSAGE_DEBUG ("degrees: %s\n", degrees);
+
+    // TODO: add argument lenght. use strncpy
+    strcpy(degreesOut, degrees);
+
+    free(degrees);
     return true;
+
+dddmm2Degrees_Failed:
+    free(degrees);
+    return false;
 }
 
 static bool getPosition(char *nmea, char *lat, char *lon, char *utctime)
 {
     if (NULL != strstr(nmea, "GNS"))
     {
-        printf("NMEA: GNSS fix data GNS \n");
+        PRINT_MESSAGE("NMEA: GNSS fix data GNS \n");
         // 0 xxGNS - string $GPGNS GNS Message ID (xx = current Talker ID)
         // 1 time - hhmmss.ss 091547.00 UTC time, see note on UTC representation
         // 2 lat - ddmm.mmmmm
@@ -151,7 +219,7 @@ static bool getPosition(char *nmea, char *lat, char *lon, char *utctime)
 
     else if (NULL != strstr(nmea, "GLL"))
     {
-        printf("NMEA: GNSS Latitude and longitude, with time of position fix and status GLL \n");
+        PRINT_MESSAGE("NMEA: GNSS Latitude and longitude, with time of position fix and status GLL \n");
         // 0 xxGLL - string $GPGLL GLL Message ID (xx = current Talker ID)
         // 1 lat - ddmm.mmmmm 4717.11364 Latitude (degrees & minutes), see format description
         // 2 NS - character N North/South indicator
@@ -171,7 +239,7 @@ static bool getPosition(char *nmea, char *lat, char *lon, char *utctime)
 
     else if (NULL != strstr(nmea, "GGA"))
     {
-        printf("NMEA: GNSSLatitude Global positioning system fix data GGA \n");
+        PRINT_MESSAGE("NMEA: GNSSLatitude Global positioning system fix data GGA \n");
         // 0 xxGGA - string $GPGGA GGA Message ID (xx = current Talker ID)
         // 1 time - hhmmss.ss 092725.00 UTC time, see note on UTC representation
         // 2 lat - ddmm.mmmmm 4717.11399 Latitude (degrees & minutes), see format description
@@ -193,7 +261,7 @@ static bool getPosition(char *nmea, char *lat, char *lon, char *utctime)
 
     else
     {
-        printf("NMEA: not supported \n");
+        PRINT_MESSAGE("NMEA: not supported \n");
         return false;
     }
     
@@ -203,8 +271,8 @@ static bool getPosition(char *nmea, char *lat, char *lon, char *utctime)
 
 int main ()
 {
-    printf ("+=========================================+\n");
-    printf ("%s\n", gnss_nmea);
+    PRINT_MESSAGE ("+=========================================+\n");
+    PRINT_MESSAGE ("%s\n", gnss_nmea);
     
     char output[MAX_NMEA_FRAME_SIZE] = { 0 };
     char lat[MAX_POISITION_LENGHT] = {0};
@@ -212,27 +280,38 @@ int main ()
     char utctime[MAX_POISITION_LENGHT] = {0};
 
     if (!getNmeaFrame (gnss_nmea, "GPGGA", &output, sizeof(output)))
-        printf("falied to get nmea frame GPGGA\n");
+    {
+        PRINT_MESSAGE("falied to get nmea frame GPGGA\n");
+    }
     else
     {
-        printf("nmea frame GPGGA: %s\n", output);
+        PRINT_MESSAGE("nmea frame GPGGA: %s\n", output);
         getPosition(&output, &lat, &lon, &utctime);
     }
 
+    // test get field GPGNS
     if (!getNmeaFrame (gnss_nmea, "GPGNS", &output, sizeof(output)))
-        printf("falied to get nmea frame GPGNS\n");
+    {
+        PRINT_MESSAGE("falied to get nmea frame GPGNS\n");
+    }
     else
     {
-        printf("nmea frame GPGNS: %s\n", output);
+        PRINT_MESSAGE("nmea frame GPGNS: %s\n", output);
         getPosition(&output, &lat, &lon, &utctime);
         for (int i=0; i<20; i++)
         {
             if (getNmeaField(&output, i, &lat))
-                printf("LAT: %s\n", lat);
+            {
+                PRINT_MESSAGE("Data: %s\n", lat);
+            }
         }
     }
     
-    dddmm2Degrees("1.2", NULL);
+    if (dddmm2Degrees("4717.11399", lat))
+    {
+        PRINT_MESSAGE("Converted: %s\n", lat);
+    }
+
 
     return 0;
 }
